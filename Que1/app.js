@@ -107,8 +107,94 @@ function authenticateToken(req, res, next) {
     });
 }
 
+// For Develop a Top Products HTTP Microservices
 
+const fetchData = async (company, category, top, minPrice, maxPrice) => {
+    try {
+        const response = await axios.get(`${BASE_URL}/companies/${company}/categories/${category}/products`, {
+            params: { top, minPrice, maxPrice },
+            headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+        });
+        return response.data.products;
+    } catch (error) {
+        console.error(`Error fetching data from ${company}:`, error);
+        return [];
+    }
+};
 
+// Generate a unique identifier for each product
+const generateUniqueId = (product) => {
+    return `${product.company}-${product.id}`;
+};
+
+// Endpoint to get top 'n' products within a category
+app.get('/categories/:categoryname/products', async (req, res) => {
+    const { categoryname } = req.params;
+    let { n, page, sort, order, minPrice, maxPrice } = req.query;
+    n = parseInt(n) || 10;
+    page = parseInt(page) || 1;
+    order = order === 'desc' ? -1 : 1;
+
+    if (n > 10) {
+        return res.status(400).send("Pagination required for more than 10 products per page.");
+    }
+
+    try {
+        const companies = ['AMZ', 'FLP', 'SNP', 'MYN', 'AZO'];
+        let products = [];
+
+        for (let company of companies) {
+            const data = await fetchData(company, categoryname, n, minPrice, maxPrice);
+            products = products.concat(data);
+        }
+
+        // Generate unique IDs
+        products = products.map(product => ({
+            ...product,
+            uniqueId: generateUniqueId(product)
+        }));
+
+        // Sort products if required
+        if (sort) {
+            products.sort((a, b) => (a[sort] > b[sort] ? 1 : -1) * order);
+        }
+
+        // Paginate results
+        const startIndex = (page - 1) * n;
+        const endIndex = startIndex + n;
+        const paginatedProducts = products.slice(startIndex, endIndex);
+
+        res.json({ products: paginatedProducts });
+    } catch (error) {
+        console.error('Error fetching products:', error);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+// Endpoint to get product details
+app.get('/categories/:categoryname/products/:productid', async (req, res) => {
+    const { categoryname, productid } = req.params;
+
+    try {
+        const companies = ['AMZ', 'FLP', 'SNP', 'MYN', 'AZO'];
+        let productDetails = null;
+
+        for (let company of companies) {
+            const data = await fetchData(company, categoryname, 10, 0, 100000); // Assume a large price range to get all products
+            productDetails = data.find(product => generateUniqueId(product) === productid);
+            if (productDetails) break;
+        }
+
+        if (productDetails) {
+            res.json(productDetails);
+        } else {
+            res.status(404).send('Product not found');
+        }
+    } catch (error) {
+        console.error('Error fetching product details:', error);
+        res.status(500).send('Internal Server Error');
+    }
+});
 
 // Define the root route
 app.get('/', (req, res) => {
