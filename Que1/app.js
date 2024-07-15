@@ -1,7 +1,9 @@
 const express = require('express');
 const axios = require('axios');
 const bodyParser = require('body-parser');
-const mongoose = require('mongoose'); // Import Mongoose
+const mongoose = require('mongoose');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 
@@ -9,7 +11,7 @@ const app = express();
 app.use(bodyParser.json());
 
 // MongoDB connection
-const dbUrl = "mongodb://127.0.0.1:27017/test"; // Replace with your MongoDB connection string
+const dbUrl = "mongodb://127.0.0.1:27017/test";
 mongoose.connect(dbUrl, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
@@ -17,59 +19,96 @@ mongoose.connect(dbUrl, {
     console.log("Connected to MongoDB");
 }).catch(err => {
     console.error("MongoDB connection error:", err);
-    process.exit(1); // Exit process on connection error
+    process.exit(1);
 });
 
-// Define Mongoose Schema (example)
-const companySchema = new mongoose.Schema({
-    companyName: String,
-    ownerName: String,
-    rollNo: Number,
-    ownerEmail: String
+// Define Mongoose Schema
+const userSchema = new mongoose.Schema({
+    username: String,
+    password: String,
 });
-const Company = mongoose.model('Company', companySchema);
+const User = mongoose.model('User', userSchema);
 
-// Route for registration
-app.post('/register', async (req, res) => {
-    const { companyName, ownerName, rollNo, ownerEmail } = req.body;
-
-    // Access code
-    const accessCode = "yBXcjs";
-
-    // Data to send to the test server
-    const registrationData = {
-        companyName,
-        ownerName,
-        rollNo,
-        ownerEmail,
-        accessCode
-    };
+// Function to authenticate against external endpoint
+async function authenticateUser(req, res, next) {
+    const { username, password } = req.body;
 
     try {
-        // Example of saving data to MongoDB using Mongoose
-        const newCompany = new Company({
-            companyName,
-            ownerName,
-            rollNo,
-            ownerEmail
-        });
-        await newCompany.save();
-
-        // Example of making external API call
-        const response = await axios.post('http://20.244.56.144/test/register', registrationData);
-        res.status(response.status).json(response.data);
-    } catch (error) {
-        // Handle error
-        console.error('Error registering company:', error.message);
-        if (error.response) {
-            res.status(error.response.status).json(error.response.data);
-        } else if (error.request) {
-            res.status(500).json({ error: 'No response received from the test server' });
+        // Example of authentication against external endpoint
+        const response = await axios.post('http://20.40.56.144/test/auth', { username, password });
+        if (response.status === 200) {
+            next(); // User authenticated, proceed to next middleware
         } else {
-            res.status(500).json({ error: 'Error setting up request to the test server' });
+            res.status(401).json({ error: 'Authentication failed' });
         }
+    } catch (error) {
+        console.error('Error authenticating user:', error.message);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+}
+
+// Route for user registration
+app.post('/register', async (req, res) => {
+    const { username, password } = req.body;
+
+    try {
+        // Check if user already exists
+        let existingUser = await User.findOne({ username });
+        if (existingUser) {
+            return res.status(400).json({ error: 'Username already exists' });
+        }
+
+        // Hash the password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Create new user
+        const newUser = new User({
+            username,
+            password: hashedPassword,
+        });
+        await newUser.save();
+
+        res.status(201).json({ message: 'User registered successfully' });
+    } catch (error) {
+        console.error('Error registering user:', error.message);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
+
+// Route for user login and JWT generation
+app.post('/login', authenticateUser, async (req, res) => {
+    const { username } = req.body;
+
+    try {
+        // Generate JWT
+        const token = jwt.sign({ username }, 'your_secret_key', { expiresIn: '1h' });
+
+        res.status(200).json({ token });
+    } catch (error) {
+        console.error('Error generating JWT:', error.message);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+// Middleware to verify JWT token
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (token == null) {
+        return res.status(401).json({ error: 'Authentication token required' });
+    }
+
+    jwt.verify(token, 'your_secret_key', (err, user) => {
+        if (err) {
+            return res.status(403).json({ error: 'Invalid token' });
+        }
+        req.user = user;
+        next();
+    });
+}
+
+
+
 
 // Define the root route
 app.get('/', (req, res) => {
